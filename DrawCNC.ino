@@ -1,33 +1,41 @@
 /*
- * DrawCNC v3 - Drawing robot configured for Nano CNC Shield V4.0+A4988
+ * DrawCNC v4 - Drawing robot #4: Dual-motor x-axis, single motor y-axis, custom driver board using Arduino Nano
  */
 
 #include <EEPROM.h>
 #include <Servo.h>
 
-const char appVersion[] = "4.0";		// Version identification
+const char appVersion[] = "DrawCNCv4 1.0";		// Version identification
 
 #define P_NO_VALUE				(-1)	// No value provided for command parameter
 #define INVALID_DIR				(999)	// "Invalid" direction value
 
 // H/W pin assignments
-#define MOTOR_ENABLE_PIN        8       // Enable steppers
-#define X_AXIS_DIR_PIN          5       // X-Axis control
-#define X_AXIS_STEP_PIN         2
+#define MOTOR_ENABLE_PIN		8       // Enable steppers
+#define X_AXIS_M1_DIR_PIN		2       // X-Axis motor #1 control
+#define X_AXIS_M1_STEP_PIN		3
+#define X_AXIS_M2_DIR_PIN       4       // X-Axis motor #2 control
+#define X_AXIS_M2_STEP_PIN		5
 #define Y_AXIS_DIR_PIN          6       // Y-Axis control
-#define Y_AXIS_STEP_PIN         3
-#define X_AXIS_LIMIT_PIN        9       // Axis limit switches
-#define Y_AXIS_LIMIT_PIN        10
-#define PEN_CONTROL_PIN         12      // Pen servo signal pin
-#define BTN_A_PIN               11      // General-purpose case buttons
-#define BTN_B_PIN               13
+#define Y_AXIS_STEP_PIN         7
+#define X_AXIS_LIMIT_PIN        10       // Axis limit switches
+#define Y_AXIS_LIMIT_PIN        11
+#define PEN_CONTROL_PIN         13      // Pen servo signal pin
 
+/****************** Motor Configurations *************/
 typedef struct {
 	int dirPin;       // Direction control pin
 	int stepPin;      // Stepping pin
-	int posDir;       // Value for dirPin which increases value along axis
-	int negDir;       // Value for dirPin which decreases value along axis
+	int posDir;       // Value for dirPin which increases value along axis (HIGH or LOW)
+	int negDir;       // Value for dirPin which decreases value along axis (HIGH or LOW)
 } MotorConfig_t;
+
+#define NUM_X_MOTORS	2
+#define NUM_Y_MOTORS	1
+
+MotorConfig_t xMotorArray[NUM_X_MOTORS] = { {X_AXIS_M1_DIR_PIN, X_AXIS_M1_STEP_PIN, LOW, HIGH },	// Two motors on X-axis
+											{X_AXIS_M2_DIR_PIN, X_AXIS_M2_STEP_PIN, HIGH, LOW } };
+MotorConfig_t yMotorArray[NUM_Y_MOTORS] = { {Y_AXIS_DIR_PIN, Y_AXIS_STEP_PIN, LOW, HIGH } };		// One motor on X-axis
 
 // X & Y-axis maximum dimensions
 #define STEPS_PER_MM    25.1
@@ -37,15 +45,16 @@ typedef struct {
 /******************* AXIS Configuration **************/
 typedef struct {
 	char label[10];          // identifying label
-	MotorConfig_t motor;     // motor config
+	int num_motors;			 // # of motors running axis
+	MotorConfig_t *motor;    // array of motor configurations
 	long maxLoc;             // max. step position (i.e. range is 0 to maxLoc)
 	float stepsPerMM;        // steps required to move 1 mm
 	int limitPin;            // Limit switch pin
 } AxisConfig_t;
 
-AxisConfig_t xAxisConfig = { "X-axis", { X_AXIS_DIR_PIN, X_AXIS_STEP_PIN, LOW, HIGH },
+AxisConfig_t xAxisConfig = { "X-axis", NUM_X_MOTORS, xMotorArray,
                               (long)(X_MAX * STEPS_PER_MM), STEPS_PER_MM, X_AXIS_LIMIT_PIN };
-AxisConfig_t yAxisConfig = { "Y-axis", { Y_AXIS_DIR_PIN, Y_AXIS_STEP_PIN, HIGH, LOW },
+AxisConfig_t yAxisConfig = { "Y-axis", NUM_Y_MOTORS, yMotorArray,
                               (long)(Y_MAX * STEPS_PER_MM), STEPS_PER_MM, Y_AXIS_LIMIT_PIN };
 
 
@@ -77,12 +86,17 @@ public:
 		curLoc = targetLoc = 0;
 		stepState = LOW;
 
-		pinMode(cfg->motor.dirPin, OUTPUT);
-		pinMode(cfg->motor.stepPin, OUTPUT);
+		// Initialize all motor controls
+		for (int i = 0; i < cfg->num_motors; i++) {
+			pinMode(cfg->motor[i].dirPin, OUTPUT);
+			digitalWrite(cfg->motor[i].dirPin, cfg->motor[i].posDir);
+			pinMode(cfg->motor[i].stepPin, OUTPUT);
+			digitalWrite(cfg->motor[i].stepPin, stepState);
+		}
+
+		// Initialize limit switch
 		pinMode(cfg->limitPin, INPUT_PULLUP);
 
-		digitalWrite(cfg->motor.dirPin, cfg->motor.posDir);
-		digitalWrite(cfg->motor.stepPin, stepState);
 	}
 
 	AxisState_t getState() {
@@ -137,11 +151,13 @@ public:
 		// Check parms. are within limits
 		targetLoc = constrain(targetLoc, 0, config->maxLoc);
 
-		// Set movement direction
-		if (targetLoc > curLoc) {
-			digitalWrite(config->motor.dirPin, config->motor.posDir);
-		} else {
-			digitalWrite(config->motor.dirPin, config->motor.negDir);
+		// Set movement direction (all motors)
+		for (int i = 0; i < config->num_motors; i++) {
+			if (targetLoc > curLoc) {
+				digitalWrite(config->motor[i].dirPin, config->motor[i].posDir);
+			} else {
+				digitalWrite(config->motor[i].dirPin, config->motor[i].negDir);
+			}
 		}
 	}
 
@@ -157,8 +173,10 @@ public:
 			stepState = LOW;
 		}
 
-		// Do the step!
-		digitalWrite(config->motor.stepPin, stepState);
+		// Do the step! (all motors)
+		for (int i = 0; i < config->num_motors; i++) {
+			digitalWrite(config->motor[i].stepPin, stepState);
+		}
 
 		// Did we actually move?
 		return (stepState == HIGH);
@@ -166,7 +184,11 @@ public:
 
 	void initHoming() {
 		axisState = ST_HOMING;
-		digitalWrite(config->motor.dirPin, config->motor.negDir);   // Set direction towards limit switch
+
+		// Set direction towards limit switch (all motors)
+		for (int i = 0; i < config->num_motors; i++) {
+			digitalWrite(config->motor[i].dirPin, config->motor[i].negDir);
+		}
 	}
 
 	boolean isIdle() {
@@ -765,16 +787,16 @@ public:
 
 	void analyzeLines() {
 		ParsedCommand_t *last, *cmd;
-		bool penDown = pen.isDown();
 
 		// No need for analysis if pen is up
 		if (pen.isDown()) {
 
 			// Calculate line from current bot location to current end point
-			last = cmdQ.first();
-			calcLine(last, xAxis.getLoc(), yAxis.getLoc());
-			Serial.print("A:");
-			Serial.print(last->dirTo);
+			if ((last = cmdQ.first()) != (ParsedCommand_t *)NULL) {
+				calcLine(last, xAxis.getLoc(), yAxis.getLoc());
+				Serial.print("A:");
+				Serial.print(last->dirTo);
+			}
 
 			while ((cmd = cmdQ.next()) != (ParsedCommand_t *)NULL) {
 
@@ -796,67 +818,6 @@ public:
 };
 
 CmdExecutive cmdExec;
-
-
-/******************* BUTTON MANAGER Configuration ************/
-
-typedef struct {
-	char *id;                 // Button ID
-	int pin;                  // Digital pin attached to button
-	bool isHigh;              // Latched state
-	char *cmdstr;             // Command string to execute
-} ButtonConfig_t;
-
-ButtonConfig_t buttonConfigList[] = { { (char *)"A", BTN_A_PIN, "" },
-                                      { (char *)"B", BTN_B_PIN, "" },
-                                    };
-
-#define BUTTON_TABLE_SIZE   sizeof(buttonConfigList) / sizeof(ButtonConfig_t)
-
-
-/******************* BUTTON MANAGER Class ************/
-
-class ButtonManager {
-	ButtonConfig_t *btnList;
-	int btnCount;
-  
-public:
-	ButtonManager(ButtonConfig_t *cfg) {
-		btnList = cfg;
-
-		// Set all pins for input
-		for (int i = 0; i < BUTTON_TABLE_SIZE; i++) {
-			cfg[i].isHigh = true;
-			pinMode(cfg[i].pin, INPUT_PULLUP);
-		}
-	}
-
-	int pressed() {
-		for (int i = 0; i < BUTTON_TABLE_SIZE; i++) {
-			if (btnList[i].isHigh) {
-				if (digitalRead(btnList[i].pin) == LOW) {
-					delay(1);
-					if (digitalRead(btnList[i].pin) == LOW) {
-						btnList[i].isHigh = false;
-						return (i);
-					}
-				}
-			} else if (digitalRead(btnList[i].pin) == HIGH) {
-				delay(1);
-				if (digitalRead(btnList[i].pin) == HIGH) {
-					btnList[i].isHigh = true;
-				}
-			}
-		}
-		return (-1);
-	}
-
-	char *getID(int btn) {
-		 return (btnList[btn].id);
-	}
-};
-
-ButtonManager btnMgr(buttonConfigList);
 
 
 /******************** SETUP() *********************/
@@ -901,10 +862,5 @@ void loop() {
 	// If command buffer not full, ready for more commands
 	if (! cmdQ.isFull()) {
 		cmdReader.ready();
-	}
-
-	// If command button pressed, acknowledge it
-	if ((i = btnMgr.pressed()) >= 0) {
-		Serial.println(btnMgr.getID(i));
 	}
 }
