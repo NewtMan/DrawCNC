@@ -5,7 +5,7 @@
 #include <EEPROM.h>
 #include <Servo.h>
 
-const char appVersion[] = "DrawCNCv4 1.0";		// Version identification
+const char appVersion[] = "DrawCNCv4.1.0";		// Version identification
 
 #define P_NO_VALUE				(-1)	// No value provided for command parameter
 #define INVALID_DIR				(999)	// "Invalid" direction value
@@ -20,7 +20,7 @@ const char appVersion[] = "DrawCNCv4 1.0";		// Version identification
 #define Y_AXIS_STEP_PIN         7
 #define X_AXIS_LIMIT_PIN        10       // Axis limit switches
 #define Y_AXIS_LIMIT_PIN        11
-#define PEN_CONTROL_PIN         13      // Pen servo signal pin
+#define PEN_CONTROL_PIN         12      // Pen servo signal pin
 
 /****************** Motor Configurations *************/
 typedef struct {
@@ -115,6 +115,7 @@ public:
 		switch (axisState) {
       
 		case ST_HOMING:
+			//Serial.println("HOMING");
 			if (! atLimit()) {
 				step();
 			} else {
@@ -307,6 +308,7 @@ public:
 		absMode = false;      		// Default is relative mode
 		busy = false;				// Initialize to "idle"
 		moveDelay = HOMING_RATE;	// Initialize for HOMING
+		prevStepTime = 0;
 	}
 
 	void setAbsMode(boolean val) {
@@ -336,13 +338,15 @@ public:
 	}  
   
 	void dumpInfo() {
-		Serial.print(F("BOT: vers. = "));
+		Serial.print(F("BOT: vers="));
 		Serial.print(appVersion);
-		Serial.print(F(", absMode = "));
+		Serial.print(F(", absMode="));
 		Serial.print(absMode);
-		Serial.print(F(", motorsEnabled = "));
+		Serial.print(F(", motorsEnabled="));
 		Serial.print(motorsEnabled);
-		Serial.print(F(", moveDelay = "));
+		Serial.print(F(", busy="));
+		Serial.print(busy);
+		Serial.print(F(", moveDelay="));
 		Serial.println(moveDelay);
 	}
 
@@ -465,12 +469,14 @@ boolean cmd_moveTo(ParsedCommand_t *cmd) {
 	if (cmd->xValid) {
 		xAxis.initMove(cmd->xLoc, bot.getAbsMode());
 		busy = true;
+		// Serial.println("XMove");
 	}
 
 	// Initialize Y-Axis for move
 	if (cmd->yValid) {
 		yAxis.initMove(cmd->yLoc, bot.getAbsMode());
 		busy = true;
+		// Serial.println("YMove");
 	}
   
 	// Move Z-Axis (pen) immediately
@@ -482,8 +488,14 @@ boolean cmd_moveTo(ParsedCommand_t *cmd) {
 		}
 	}
 
-	// Initialize bot for move
-	bot.initMove();
+	// Initialize bot for move (if move involves X or Y axis)
+	if (busy) {
+		bot.initMove();
+	}
+
+	// bot.dumpInfo();
+	// xAxis.dumpInfo();
+	// yAxis.dumpInfo();
 
 	return (busy);
 }
@@ -491,6 +503,7 @@ boolean cmd_moveTo(ParsedCommand_t *cmd) {
 
 // CMD_MOVEHOME() - Home one or more axis
 boolean cmd_moveHome(ParsedCommand_t *cmd) {
+	Serial.println("moveHome");
 
 	// Initialize X-Axis for move
 	if (cmd->xValid || (! cmd->xValid && ! cmd->yValid)) {
@@ -507,6 +520,10 @@ boolean cmd_moveHome(ParsedCommand_t *cmd) {
 
 	// Initialize bot for HOMING
 	bot.initHoming();
+
+	//bot.dumpInfo();
+	//xAxis.dumpInfo();
+	//yAxis.dumpInfo();
 
 	// Always busy
 	return (true);
@@ -851,7 +868,7 @@ void loop() {
 	if (cmdReader.checkForInput()) {
 
 		// New command received - run line analysis
-		cmdExec.analyzeLines();
+		//cmdExec.analyzeLines();
 	}
 
 	// If machine is idle, execute next command(s) (if any)
